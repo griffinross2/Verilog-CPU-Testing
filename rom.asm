@@ -6,11 +6,11 @@ main:
     ldy #0          ; load Y with the value 0
     ldx #10         ; load X with the value 10
 loop:
-    adc fibonacci   ; add to A
-    sta fibonacci   ; store the value of A
-    phy             ; push the value of A onto the stack
-    tay             ; transfer the value of A to Y
-    pla             ; pull the value of A from the stack
+    adc fibonacci   ; get the new fibonacci number
+    sta fibonacci   ; store it
+    phy             ; swap Y and A
+    tay
+    pla
     dex             ; decrement X
     biz inf         ; branch if zero to inf
     jmp loop        ; jump to loop
