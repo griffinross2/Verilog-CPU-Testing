@@ -136,7 +136,8 @@ module cpu (
     reg [15:0] ab;  // Address buffer
     reg [31:0] db;  // Data buffer
     reg [31:0] ar;  // A register
-    reg [31:0] br;  // B register
+    reg [31:0] xr;  // X register
+    reg [31:0] yr;  // Y register
     reg [7:0] sr;   // 0 - zero, 1 - carry
     reg [31:0] stack[0:255];   // Stack
     reg [7:0] sp;   // Stack pointer
@@ -167,11 +168,14 @@ module cpu (
         if (reset) begin
             ir <= 0;
             ar <= 0;
+            xr <= 0;
+            yr <= 0;
             sr <= 0;
             pc_en <= 1;
             addr_sel <= 0;
             oe <= 0;
             sp <= 0;
+            next_addr <= 0;
         end else begin
             casez (ir)
                 8'h00: begin    // NOP/load instruction
@@ -180,36 +184,76 @@ module cpu (
                     oe <= 0;
                     next_addr <= addr_inc;
                 end
-                8'b?000_0001: begin    // Load A (p1)
-                    ar <= ir[7] ? ar : din;     // Load value if direct
-                    sr[0] <= ir[7] ? 0 : ~|din; // Set zero flag if direct
-                    ir <= ir[7] ? 8'hC1: 8'h00; // Go to second part if indirect
-                    ab <= ir[7] ? din : ab;     // Load address if indirect
-                    addr_sel <= ir[7];          // Enable address output if indirect
+                8'b?000_0001,
+                8'b?001_0001,
+                8'b?010_0001: begin     // Load reg (p1)
+                    if(~ir[7]) begin    // Direct operation
+                        case (ir[5:4])
+                            2'b00:
+                                ar <= din;
+                            2'b01:
+                                xr <= din;
+                            2'b10:
+                                yr <= din;
+                            default:
+                                ;
+                        endcase
+                        sr[0] <= ~|din;
+                        ir <= 0;
+                    end
+                    else begin
+                        ir <= {2'b11, ir[5:0]}; // Go to second part if indirect
+                        ab <= din;      // Load address if indirect
+                        addr_sel <= 1;  // Enable address output if indirect
+                    end
                     oe <= 0;
                     next_addr <= addr_inc;
                 end
-                8'b1100_0001: begin    // Load A (p2 if indirect)
-                    ar <= din;          // Load value
+                8'b1100_0001,
+                8'b1101_0001,
+                8'b1110_0001: begin    // Load reg (p2 if indirect)
+                    case (ir[5:4])
+                        2'b00:
+                            ar <= din;
+                        2'b01:
+                            xr <= din;
+                        2'b10:
+                            yr <= din;
+                        default:
+                            ;
+                    endcase
                     sr[0] <= ~|din;     // Set zero flag
                     ir <= 8'h00;
                     addr_sel <= 0;      // Disable address output
                     oe <= 0;            // Disable address output
                     next_addr <= next_addr;
                 end
-                8'h03: begin    // Store A (p1)
+                8'b0000_0011,
+                8'b0001_0011,
+                8'b0010_0011: begin    // Store reg (p1)
                     ab <= din[15:0];
-                    db <= ar;
-                    ir <= 8'h02;
+                    case (ir[5:4])
+                        2'b00:
+                            db <= ar;
+                        2'b01:
+                            db <= xr;
+                        2'b10:
+                            db <= yr;
+                        default:
+                            ;
+                    endcase
+                    ir <= {ir[7:2], 2'b10};
                     addr_sel <= 1;
                     oe <= 1;
                     next_addr <= addr_inc;
                 end
-                8'h02: begin    // Store A (p2)
+                8'b0000_0010,
+                8'b0001_0010,
+                8'b0010_0010: begin    // Store reg (p2)
                     ir <= 0;
                     addr_sel <= 0;
                     oe <= 0;
-                    next_addr <= addrout;
+                    next_addr <= next_addr;
                 end
                 8'b?00010??: begin  // ALU operation (p1)
                     ir <= ir[7] ? {6'b110010, ir[1:0]} : {6'h01, ir[1:0]};  // Set next instruction
@@ -225,7 +269,7 @@ module cpu (
                     alu_b <= din;           // Load actual value
                     addr_sel <= 0;          // Disable address output
                     oe <= 0;                // Disable address output
-                    next_addr <= addr_inc;  
+                    next_addr <= next_addr;  
                 end
                 8'b000001??: begin  // ALU operation (end)
                     ir <= 0;
@@ -233,7 +277,7 @@ module cpu (
                     ar <= alu_r;    // Load result
                     addr_sel <= 0;  
                     oe <= 0;
-                    next_addr <= addrout;
+                    next_addr <= next_addr;
                 end
                 8'h10: begin    // Jump
                     ir <= 0;
@@ -241,127 +285,228 @@ module cpu (
                     addr_sel <= 0;
                     oe <= 0;
                 end
-                8'h13: begin    // Jump to subroutine (p1)
-                    ir <= 8'h12;
+                8'h15: begin    // Jump to subroutine (p1)
+                    ir <= 8'h14;
                     next_addr <= din[15:0];
                     addr_sel <= 0;
                     oe <= 0;
                     stack[sp] <= addr_inc;
                 end
-                8'h12: begin    // Jump to subroutine (p2)
+                8'h14: begin    // Jump to subroutine (p2)
                     ir <= 0;
-                    next_addr <= addrout;
+                    next_addr <= next_addr;
                     addr_sel <= 0;
                     oe <= 0;
                     sp <= sp_inc;
                 end
-                8'h15: begin    // Return from subroutine (p1)
-                    ir <= 8'h14;
+                8'h17: begin    // Return from subroutine (p1)
+                    ir <= 8'h16;
                     addr_sel <= 0;
                     oe <= 0;
                     sp <= sp_dec;
                 end
-                8'h14: begin    // Return from subroutine (p2)
+                8'h16: begin    // Return from subroutine (p2)
                     ir <= 0;
                     next_addr <= stack[sp];
                     addr_sel <= 0;
                     oe <= 0;
                 end
-                8'h16: begin    // Branch if zero
+                8'h36: begin    // Branch if zero
                     ir <= 0;
                     next_addr <= sr[0] ? din[15:0] : addr_inc;
                     addr_sel <= 0;
                     oe <= 0;
                 end
-                8'h17: begin    // Branch if not zero
+                8'h37: begin    // Branch if not zero
                     ir <= 0;
                     next_addr <= sr[0] ? addr_inc : din[15:0];
                     addr_sel <= 0;
                     oe <= 0;
                 end
-                8'h19: begin    // Push A to stack (p1)
-                    ir <= 8'h18;
+                8'b0000_1100,
+                8'b0001_1100,
+                8'b0010_1100: begin    // Push ? to stack (p1)
+                    ir <= {ir[7:3], 3'b011};
                     addr_sel <= 0;
                     oe <= 0;
-                    stack[sp] <= ar;
+                    case (ir[5:4])
+                        2'b00:
+                            stack[sp] <= ar;
+                        2'b01:
+                            stack[sp] <= xr;
+                        2'b10:
+                            stack[sp] <= yr;
+                        default:
+                            ;
+                    endcase
                 end
-                8'h18: begin    // Push A to stack (p2)
+                8'b0000_1011,
+                8'b0001_1011,
+                8'b0010_1011: begin    // Push ? to stack (p2)
                     ir <= 0;
                     addr_sel <= 0;
                     oe <= 0;
                     sp <= sp_inc;
                 end
-                8'h1B: begin    // Pull A from stack (p1)
-                    ir <= 8'h1A;
+                8'b0000_1110,
+                8'b0001_1110,
+                8'b0010_1110: begin    // Pull ? from stack (p1)
+                    ir <= {ir[7:3], 3'b101};
                     addr_sel <= 0;
                     oe <= 0;
                     sp <= sp_dec;
                 end
-                8'h1A: begin    // Pull A from stack (p2)
+                8'b0000_1101,
+                8'b0001_1101,
+                8'b0010_1101: begin    // Pull ? from stack (p2)
                     ir <= 0;
                     addr_sel <= 0;
                     oe <= 0;
-                    ar <= stack[sp];
+                    case (ir[5:4])
+                        2'b00:
+                            ar <= stack[sp];
+                        2'b01:
+                            xr <= stack[sp];
+                        2'b10:
+                            yr <= stack[sp];
+                        default:
+                            ;
+                    endcase
                 end
-                8'h1C: begin    // Branch if carry set
+                8'h38: begin    // Branch if carry set
                     ir <= 0;
                     next_addr <= sr[1] ? din[15:0] : addr_inc;
                     addr_sel <= 0;
                     oe <= 0;
                 end
-                8'h1D: begin    // Branch if carry clear
+                8'h39: begin    // Branch if carry clear
                     ir <= 0;
                     next_addr <= sr[1] ? addr_inc : din[15:0];
                     addr_sel <= 0;
                     oe <= 0;
                 end
-                8'b?010_00??: begin // Logical operation (p1)
-                    ir <= (ir[7] & ~(ir[1:0] == 2'b11)) ? {6'b111000, ir[1:0]} : 0;
+                8'b?011_00??: begin // Logical operation (p1)
+                    ir <= (ir[7] & ~(ir[1:0] == 2'b11)) ? {6'b111100, ir[1:0]} : 0;
                     ab <= ir[7] ? din : ab; // Load address if indirect
                     addr_sel <= ir[7];      // Enable address output if indirect
                     oe <= 0;
                     if(~ir[7]) begin        // Direct operation
                         case (ir[1:0])
-                            2'b00:
+                            2'b00: begin
                                 ar <= din | ar;
-                            2'b01:
+                                sr[0] <= ~|(din | ar);
+                            end
+                            2'b01: begin
                                 ar <= din & ar;
-                            2'b10:
+                                sr[0] <= ~|(din & ar);
+                            end
+                            2'b10: begin
                                 ar <= din ^ ar;
-                            2'b11:
+                                sr[0] <= ~|(din ^ ar);
+                            end
+                            2'b11: begin
                                 ar <= ~ar; 
+                                sr[0] <= &(ar);
+                            end
                             default: 
                                 ar <= ar;
                         endcase
                     end
                     next_addr <= (ir[1:0] == 2'b11) ? next_addr : addr_inc; // NOT takes no data
                 end
-                8'b1110_00??: begin // Logical operation (p2 if indirect)
+                8'b1111_00??: begin // Logical operation (p2 if indirect)
                     ir <= 0;
                     addr_sel <= 0;          // Disable address output
                     oe <= 0;
                     case (ir[1:0])
-                        2'b00:
+                        2'b00: begin
                             ar <= din | ar;
-                        2'b01:
+                            sr[0] <= ~|(din | ar);
+                        end
+                        2'b01: begin
                             ar <= din & ar;
-                        2'b10:
+                            sr[0] <= ~|(din & ar);
+                        end
+                        2'b10: begin
                             ar <= din ^ ar;
+                            sr[0] <= ~|(din ^ ar);
+                        end
                         default:
                             ar <= ar;
                     endcase
                     next_addr <= next_addr;
                 end
-                8'h24: begin    // Shift A left
+                8'h34: begin    // Shift A left
                     ir <= 0;
                     ar <= {ar[30:0], 1'b0};
+                    sr[0] <= ~|({ar[30:0], 1'b0});
                     addr_sel <= 0;
                     oe <= 0;
                     next_addr <= next_addr;
                 end
-                8'h25: begin    // Shift A right (arithmetic)
+                8'b0100_000?: begin    // Transfer A to ?
+                    ir <= 0;
+                    case (ir[0])
+                        1'b0:
+                            xr <= ar;
+                        1'b1:
+                            yr <= ar;
+                    endcase
+                    addr_sel <= 0;
+                    oe <= 0;
+                    next_addr <= next_addr;
+                end
+                8'b0101_000?: begin    // Transfer ? to A
+                    ir <= 0;
+                    case (ir[0])
+                        1'b0:
+                            ar <= xr;
+                        1'b1:
+                            ar <= yr;
+                    endcase
+                    addr_sel <= 0;
+                    oe <= 0;
+                    next_addr <= next_addr;
+                end
+                8'h35: begin    // Shift A right (arithmetic)
                     ir <= 0;
                     ar <= {ar[31], ar[31:1]};
+                    sr[0] <= ~|({ar[31], ar[31:1]});
+                    addr_sel <= 0;
+                    oe <= 0;
+                    next_addr <= next_addr;
+                end
+                8'b01??_100?: begin    // Inc/Dec reg (p1)
+                    ir <= {ir[7:4], 2'b01, ir[1:0]};  // Set next instruction
+                    case (ir[5:4])
+                        2'b00:
+                            alu_a <= ar;
+                        2'b01:
+                            alu_a <= xr;
+                        2'b10:
+                            alu_a <= yr;
+                        default:
+                            ;
+                    endcase
+                    alu_b <= 1;
+                    addr_sel <= 0;
+                    oe <= 0;
+                    next_addr <= next_addr;
+                end
+                8'b01??_010?: begin    // Inc/Dec reg (p2)
+                    ir <= 0;
+                    case (ir[5:4])
+                        2'b00:
+                            ar <= alu_r;
+                        2'b01:
+                            xr <= alu_r;
+                        2'b10:
+                            yr <= alu_r;
+                        default:
+                            ;
+                    endcase
+                    sr[0] <= alu_zero;
+                    sr[1] <= alu_cout;
                     addr_sel <= 0;
                     oe <= 0;
                     next_addr <= next_addr;
@@ -375,40 +520,6 @@ module cpu (
             endcase
         end
     end
-
-endmodule
-
-module memory (
-    input wire clk,
-    input wire [14:0] addr,
-    input wire [31:0] din,
-    output wire [31:0] dout,
-    input wire rw
-);
-    (* ram_style = "distributed" *)reg [31:0] memory [0:32767];
-
-    initial begin
-        // Initialize 10 to 1
-        memory[0] = 32'h0001;   // LDA
-        memory[1] = 32'h0001;   // #h1
-        memory[2] = 32'h0003;   // STA
-        memory[3] = 32'h0010;   // h10
-
-        // Shift left repeatedly
-        memory[4] = 32'h0081;   // LDA (indirect)
-        memory[5] = 32'h0010;   // h10
-        memory[6] = 32'h0022;   // XOR
-        memory[7] = 32'hAAAAAAAA;   // #hAAAAAAAA
-        memory[8] = 32'h0003;   // STA
-        memory[9] = 32'h0010;   // h10
-        memory[10] = 32'h0010;  // JMP
-        memory[11] = 32'h0004;  // h4
-    end
-
-    always @(posedge clk) begin
-        if (~rw) memory[addr] <= din;
-    end
-    assign dout = memory[addr];
 
 endmodule
 

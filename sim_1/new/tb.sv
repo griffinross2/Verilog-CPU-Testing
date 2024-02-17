@@ -27,21 +27,48 @@ module tb(
     timeprecision 10ps;
     specparam PERIOD = 1000000 / 100 / 2;
     
-    reg [31:0] a;
-    reg [31:0] b;
-    reg cin;
-    reg cout;
-    reg [31:0] sum;
+    reg [31:0] din, dout;
+    reg [15:0] addr;
+    reg rw;
+    reg clk, rst;
+    integer done_reset;
     
-    reg clk;
+    cpu cpu0 (clk, rst, din, dout, addr, rw);
+    memory mem0 (clk, addr[14:0], dout, din, rw);
+    
+    always @(posedge clk) begin
+        if (done_reset == 0) begin
+            rst = 0;
+        end else
+            done_reset -= 1;
+    end
+    
     initial begin 
-        a = 32'h20000000;
-        b = 32'h00400000;
-        cin = 1'b0;
         clk = 0;
-        add32(a, b, cin, cout, sum);
+        rst = 1;
+        done_reset = 2;
         forever begin
             #PERIOD clk = ~clk;
         end 
     end
+endmodule
+
+module memory (
+    input wire clk,
+    input wire [14:0] addr,
+    input wire [31:0] din,
+    output wire [31:0] dout,
+    input wire rw
+);
+    (* ram_style = "distributed" *)reg [31:0] memory [0:32767];
+
+    initial begin
+        $readmemh("C:/Users/griff/OneDrive/Documents/Vivado_Projects/CPU_Testing/CPU_Testing.srcs/rom.mem", memory);
+    end
+
+    always @(posedge clk) begin
+        if (~rw) memory[addr] <= din;
+    end
+    assign dout = memory[addr];
+
 endmodule
