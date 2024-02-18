@@ -439,6 +439,7 @@ module cpu (
                 8'h34: begin    // Shift A left
                     ir <= 0;
                     ar <= {ar[30:0], 1'b0};
+                    sr[1] <= ar[31];
                     sr[0] <= ~|({ar[30:0], 1'b0});
                     addr_sel <= 0;
                     oe <= 0;
@@ -471,6 +472,7 @@ module cpu (
                 8'h35: begin    // Shift A right (arithmetic)
                     ir <= 0;
                     ar <= {ar[31], ar[31:1]};
+                    sr[1] <= ar[0];
                     sr[0] <= ~|({ar[31], ar[31:1]});
                     addr_sel <= 0;
                     oe <= 0;
